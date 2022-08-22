@@ -7,7 +7,7 @@ A collection of templated containers for C. Currently on supports clang with ext
 Other useful things will be added in the future, probably as I need them (SIMD wrappers, algorithms, etc.)
 
 Usage:
-```
+```C
 #define Vector_Type int
 #include "ctl/containers/vector.h"
 
