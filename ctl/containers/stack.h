@@ -1,218 +1,231 @@
-#include <stddef.h>
-#include <stdbool.h>
-
-#if !defined(_STACK_INCLUDED)
-#   define _STACK_INCLUDED
-#   if !defined(_CONCAT2)
-#       define _CONCAT2_(a, b) a ## _ ## b
-#       define _CONCAT2(a, b) _CONCAT2_(a, b)
-#   endif
-
 /* --------- PUBLIC API ---------- */
-
 // Include Parameters:
 //  The type of the elements the stack should contain:
-//      #define REQ_PARAM_type                 T
-//
-//  The initial length the stack should allocate to:
-//      Default: 16 elements
-//      #define OPT_PARAM_init_capacity         16
+//      #define Stack_Type                 T
 //
 //  The growth function the stack should use when it needs to expand:
 //      Default: 2 * old_size
-//      #define OPT_PARAM_grow(old_size)        (2 * old_size)
+//      #define Stack_Grow(old_size)        (2 * old_size)
 //
 //  An allocator function (obeying ISO C's malloc/calloc semantics):
 //      Default: malloc
-//      #define OPT_PARAM_malloc(bytes)        malloc(bytes)
+//      #define Stack_Malloc(bytes)        malloc(bytes)
 //
 //  A reallocator function (obeying ISO C's realloc semantics):
 //      Default: realloc
-//      #define OPT_PARAM_realloc(ptr, bytes)  realloc(ptr, bytes)
+//      #define Stack_Realloc(ptr, bytes)  realloc(ptr, bytes)
 //
 //  A free function (obeying ISO C's free semantics):
 //      Default: free
-//      #define OPT_PARAM_free(ptr)            free(ptr)
-
-// Functions:
-//  The stack type
-#define Stack(T)                _CONCAT2(_Stack, T)
-
-// Create a new stack
-//  Stack(T)* Stack_New(T)()
-#define Stack_New(T)            _CONCAT2(_Stack_New, T)
-
-// Delete a stack
-//  void Stack_Delete(T)(Stack(T)* stack)
-#define Stack_Delete(T)         _CONCAT2(_Stack_Delete, T)
-
-// If the stack has less space allocated than required for the count specified,
-// allocate the amount of space. Otherwise it's a NOP.
-//  bool Stack_Reserve(T)(Stack(T)* stack, size_t count)
-#define Stack_Reserve(T)        _CONCAT2(_Stack_Reserve, T)
-
-// Push a copy of the element onto the stack
-//  bool Stack_Push(T)(Stack(T)* stack, const T* elem)
-#define Stack_Push(T)           _CONCAT2(_Stack_Push, T)
-
-// Push a copy of multiple elements onto the stack
-//  bool Stack_PushMany(T)(Stack(T)* stack, const T elems[], size_t length)
-#define Stack_PushMany(T)       _CONCAT2(_Stack_PushMany, T)
-
-// Pop a copy of the element off the stack
-//  bool Stack_Pop(T)(Stack(T)* stack, T* dest)
-#define Stack_Pop(T)            _CONCAT2(_Stack_Pop, T)
-
-// Pop multiple elements off the stack to a T[], where the first element is the top of the stack
-// and the last element is the last element pop'd
-//  size_t Stack_PopMany(T)(Stack(T)* stack, T dest[], size_t length)
-#define Stack_PopMany(T)        _CONCAT2(_Stack_PopMany, T)
-
-// Peek the top element off the stack
-//  bool Stack_Peek(T)(Stack(T)* stack, T* dest)
-#define Stack_Peek(T)           _CONCAT2(_Stack_Peek, T)
-
-// Peek multiple elements off the stack
-//  size_t Stack_PeekMany(T)(Stack(T)* stack, T dest[], size_t length)
-#define Stack_PeekMany(T)       _CONCAT2(_Stack_PeekMany, T)
-
-// Clear the stack, freeing the underlying buffer
-//  void Stack_Clear(T)(Stack(T)* stack)
-#define Stack_Clear(T)          _CONCAT2(_Stack_Clear, T)
-
-// Shrink the underlying buffer to fit the current size of the stack
-//  bool Stack_Shrink(T)(Stack(T)* stack)
-#define Stack_Shrink(T)         _CONCAT2(_Stack_Shrink, T)
-
+//      #define Stack_Free(ptr)            free(ptr)
 /* --------- END PUBLIC API ---------- */
+
+#include <stdbool.h>
+#include <stddef.h>
+
+#if !defined(CTL_STACK_INCLUDED)
+#    define CTL_STACK_INCLUDED
+#    if !defined(CTL_CONCAT2_) && !defined(CTL_CONCAT2)
+#        define CTL_CONCAT2_(a, b) a##_##b
+#        define CTL_CONCAT2(a, b)  CTL_CONCAT2_(a, b)
+#    endif
+
+#    if !defined(CTL_OVERLOADABLE)
+#        define CTL_OVERLOADABLE __attribute__((overloadable))
+#    endif
+
+#    define Stack(T)     CTL_CONCAT2(_Stack, T)
+#    define Stack_New(T) CTL_CONCAT2(_Stack_New, T)
+
 #endif
 
-#if !defined (REQ_PARAM_type)
-#   error "Stack requires a type specialization"
+#if !defined(Stack_Type)
+#    error "Stack requires a type specialization"
 #endif
 
-#if !defined (OPT_PARAM_init_capacity)
-#   define OPT_PARAM_init_capacity 16
+#if !defined(Stack_InitCapacity)
+#    define Stack_InitCapacity 16
 #endif
 
-#if !defined (OPT_PARAM_grow)
-#   define OPT_PARAM_grow(old_size) (2 * old_size)
+#if !defined(Stack_Grow)
+#    define Stack_Grow(old_size) (2 * old_size)
 #endif
 
-#if !defined (OPT_PARAM_malloc)
-#   if !defined (_DEFAULT_ALLOCATOR)
-#       define _DEFAULT_ALLOCATOR
-#   endif
+#if !defined(Stack_Malloc)
+#    if !defined(Stack_DefaultAllocator)
+#        define Stack_DefaultAllocator
+#    endif
 
-#   define OPT_PARAM_malloc(bytes) calloc(1, bytes)
+#    define Stack_Malloc(bytes) calloc(1, bytes)
 #endif
 
-#if !defined (OPT_PARAM_realloc)
-#   if !defined (_DEFAULT_ALLOCATOR)
-#       warning "Non-default malloc used with default realloc"
-#   endif
+#if !defined(Stack_Realloc)
+#    if !defined(Stack_DefaultAllocator)
+#        warning "Non-default malloc used with default realloc"
+#    endif
 
-#   define OPT_PARAM_realloc realloc
+#    define Stack_Realloc realloc
 #endif
 
-#if !defined (OPT_PARAM_free)
-#   if !defined (_DEFAULT_ALLOCATOR)
-#       warning "Non-default malloc used with default free"
-#   endif
+#if !defined(Stack_Free)
+#    if !defined(Stack_DefaultAllocator)
+#        warning "Non-default malloc used with default free"
+#    endif
 
-#   define OPT_PARAM_free free
+#    define Stack_Free free
 #endif
 
-#if defined(_DEFAULT_ALLOCATOR)
-#   include <stdlib.h>
+#if defined(Stack_DefaultAllocator)
+#    include <stdlib.h>
 #endif
 
 // useful macros internally
 
-#define T REQ_PARAM_type
-#define stack_init_capacity OPT_PARAM_init_capacity
-#define stack_grow OPT_PARAM_grow
-#define malloc OPT_PARAM_malloc
-#define realloc OPT_PARAM_realloc
-#define free OPT_PARAM_free
+#define T Stack_Type
 
-#define max(a, b) ((a) > (b) ? (a) : (b))
-#define min(a, b) ((a) < (b) ? (a) : (b))
+#if !defined(Stack_Type_Alias)
+#    define T_ T
+#else
+#    define T_ Stack_Type_Alias
+#endif
 
+#define Stack_Max(a, b)     \
+    ({                      \
+        typeof(a) _a = (a); \
+        typeof(b) _b = (b); \
+        _a > _b ? _a : _b;  \
+    })
+
+#define Stack_Min(a, b)     \
+    ({                      \
+        typeof(a) _a = (a); \
+        typeof(b) _b = (b); \
+        _a < _b ? _a : _b;  \
+    })
 
 // data types
 
-typedef struct Stack(T) {
-    T* base;
-    T* head;
+typedef struct Stack(T_) {
+    T*     base;
+    T*     head;
     size_t count;
     size_t capacity;
-} Stack(T);
+}
+Stack(T_);
 
 // functions
 
-Stack(T)* Stack_New(T)()
-{
-    Stack(T)* stack = malloc(sizeof(Stack(T)));
+/**
+ * @brief Initializes a stack
+ * @param stack A pointer to the stack to initialize
+ * @param capacity The initial capacity of the stack
+ * @return True if the initialization succeeded, false otherwise
+ */
+CTL_OVERLOADABLE
+static inline bool Stack_Init(Stack(T_) * stack, size_t capacity) {
+    T* buffer = Stack_Malloc(sizeof(T) * Stack_InitCapacity);
+    if (stack == NULL) {
+        return false;
+    }
+
+    stack->base     = buffer;
+    stack->head     = buffer;
+    stack->count    = 0;
+    stack->capacity = capacity;
+
+    return true;
+}
+
+/**
+ * @brief Allocates and intiailizes a dict on the heap
+ * @param capacity The initial capacity of the stack
+ * @return A pointer to the stack on the heap, or NULL if the allocation failed
+ */
+static inline Stack(T_) * Stack_New(T_)(size_t capacity) {
+    Stack(T_)* stack = Stack_Malloc(sizeof(Stack(T_)));
     if (stack == NULL) {
         return NULL;
     }
 
-    T* buffer = malloc(sizeof(T) * stack_init_capacity);
-    if (stack == NULL) {
+    if (!Stack_Init(stack, capacity)) {
+        Stack_Free(stack);
         return NULL;
     }
-
-    stack->base = buffer;
-    stack->head = buffer;
-    stack->count = 0;
-    stack->capacity = stack_init_capacity;
 
     return stack;
 }
 
-void Stack_Delete(T)(Stack(T)* stack)
-{
-    free(stack->base);
-    free(stack);
+/**
+ * @brief Uninitializes a stack, which then allows it to be discarded without leaking memory
+ * @param stack The stack to uninitialize
+ * @warning This function should only be used in conjunction with @ref Stack_Init
+ */
+CTL_OVERLOADABLE
+static inline void Stack_Uninit(Stack(T_) * stack) {
+    Stack_Free(stack->base);
 }
 
-bool Stack_Reserve(T)(Stack(T)* stack, size_t count)
-{
+/**
+ * @brief Deletes a stack that was allocated on the heap
+ * @param stack The stack to delete
+ * @warning This function should only be used in conjunction with @ref Stack_New
+ */
+CTL_OVERLOADABLE
+static inline void Stack_Delete(Stack(T_) * stack) {
+    Stack_Uninit(stack);
+    Stack_Free(stack);
+}
+
+/**
+ * @brief Reserves more space for the stack if @param capacity is > the stack's capacity, does nothing otherwise
+ * @param stack The stack to reserve space for
+ * @param capacity The desired capacity of the stack
+ * @return True if space was reserved or if no allocation was required, returns False otherwise
+ */
+CTL_OVERLOADABLE
+static inline bool Stack_Reserve(Stack(T_) * stack, size_t capacity) {
     if (stack->capacity >= count) {
         return true;
     }
 
-    T* newBuffer = realloc(stack->base, sizeof(T) * count);
+    T* newBuffer = Stack_Realloc(stack->base, sizeof(T) * count);
     if (newBuffer == NULL) {
         return false;
     }
 
-    stack->base = newBuffer;
-    stack->head = &newBuffer[count];
+    stack->base     = newBuffer;
+    stack->head     = &newBuffer[count];
     stack->capacity = count;
 
     return true;
 }
 
-bool Stack_PushMany(T)(Stack(T)* stack, const T elems[], size_t length)
-{
+/**
+ * @brief Pushes @param length elements from @param elems to the stack in array order
+ * @param stack The stack to push elements to
+ * @param elems The array of elements to push to the stack
+ * @param length The length of the array, also the number of elements to push to the stack
+ * @return True if all the elements were pushed to the stack successfully, False otherwise
+ * @note If the function returns False, the stack is left intact and no elements were pushed to the stack
+ */
+CTL_OVERLOADABLE
+static inline bool Stack_PushMany(Stack(T_) * stack, T* elems, size_t length) {
     // see if we need to grow the buffer
     if (stack->count + length > stack->capacity) {
         size_t newCapacity;
         if (stack->capacity == 0) {
-            newCapacity = max(stack->count + length, stack_init_capacity);
+            newCapacity = Stack_Max(stack->count + length, Stack_InitCapacity);
         } else {
-            newCapacity = max(stack->count + length, stack_grow(stack->capacity));
+            newCapacity = Stack_Max(stack->count + length, Stack_Grow(stack->capacity));
         }
 
-        T* newBuffer = realloc(stack->base, sizeof(T) * newCapacity);
+        T* newBuffer = Stack_Realloc(stack->base, sizeof(T) * newCapacity);
         if (newBuffer == NULL) {
             return false;
         }
 
-        stack->base = newBuffer;
-        stack->head = &newBuffer[stack->count];
+        stack->base     = newBuffer;
+        stack->head     = &newBuffer[stack->count];
         stack->capacity = newCapacity;
     }
 
@@ -226,14 +239,29 @@ bool Stack_PushMany(T)(Stack(T)* stack, const T elems[], size_t length)
     return true;
 }
 
-bool Stack_Push(T)(Stack(T)* stack, const T* elem)
-{
-    return Stack_PushMany(T)(stack, elem, 1);
+/**
+ * @brief Pushes a single element to the stack
+ * @param stack The stack to push an element to
+ * @param elem The element to push to the stack
+ * @return True if the element was pushed to the stack successfully, False otherwise
+ */
+CTL_OVERLOADABLE
+static inline bool Stack_Push(Stack(T_) * stack, T* elem) {
+    return Stack_PushMany(stack, elem, 1);
 }
 
-size_t Stack_PeekMany(T)(Stack(T)* stack, T dest[], size_t length)
-{
-    size_t peekCount = min(length, stack->count);
+/**
+ * @brief Read @param length number of elements from the top of the stack in popped order to @param dest without
+ * removing them from the stack
+ * @param stack The stack to peek elements from
+ * @param dest The destination to peek elements to
+ * @param length The length of the array, also the number of elements to peek off the stack
+ * @return The number of elements peek'd from the stack,
+ * @note The value returned may be smaller than @param length if the stack has fewer elements than @param length
+ */
+CTL_OVERLOADABLE
+static inline size_t Stack_PeekMany(Stack(T_) * stack, T* dest, size_t length) {
+    size_t peekCount = Stack_Min(length, stack->count);
 
     for (size_t ii = 0; ii < peekCount; ++ii) {
         dest[ii] = stack->base[stack->count - 1 - ii];
@@ -242,49 +270,80 @@ size_t Stack_PeekMany(T)(Stack(T)* stack, T dest[], size_t length)
     return peekCount;
 }
 
-size_t Stack_Peek(T)(Stack(T)* stack, T* dest)
-{
-    return Stack_PeekMany(T)(stack, dest, 1);
+/**
+ * @brief Peek a single element from the top of the stack
+ * @param stack The stack to peek an element from
+ * @param dest The destination of the peek'd element
+ * @return The number of elements peek'd
+ * @note The value returned is 0 if no elements were present on the stack, 1 if an element was present
+ */
+CTL_OVERLOADABLE
+static inline size_t Stack_Peek(Stack(T_) * stack, T* dest) {
+    return Stack_PeekMany(stack, dest, 1);
 }
 
-size_t Stack_PopMany(T)(Stack(T)* stack, T dest[], size_t length)
-{
-    size_t popCount = Stack_PeekMany(T)(stack, dest, length);
+/**
+ * @brief Pops @param length elements from @param stack into @param dest in pop order
+ * @param stack The stack to pop elements from
+ * @param dest The destination array for the elements popped ([0] = top element, [1] = next, etc.)
+ * @param length The length of the array, also the number of elements to pop from the stack
+ * @return The number of elements popped from the stack
+ * @note The value returned may be < @param length if fewer elements were on the stack than @param length
+ */
+CTL_OVERLOADABLE
+static inline size_t Stack_PopMany(Stack(T_) * stack, T* dest, size_t length) {
+    size_t popCount = Stack_PeekMany(stack, dest, length);
 
     stack->count -= popCount;
-    stack->head = &stack->head[stack->count];
+    stack->head = &stack->base[stack->count];
 
     return popCount;
 }
 
-size_t Stack_Pop(T)(Stack(T)* stack, T* dest)
-{
-    return Stack_PopMany(T)(stack, dest, 1);
+/**
+ * @brief Pops a single element from @param stack into @param dest
+ * @param stack The stack to pop elements from
+ * @param dest Where to store the popped element
+ * @return The number of elements popped
+ * @note The value returned is 1 if an element was present on the stack, 0 if the stack was empty
+ */
+CTL_OVERLOADABLE
+static inline size_t Stack_Pop(Stack(T_) * stack, T* dest) {
+    return Stack_PopMany(stack, dest, 1);
 }
 
-void Stack_Clear(T)(Stack(T)* stack)
-{
-    free(stack->base);
+/**
+ * @brief Clears the internal stack contents, freeing up memory while keeping the stack in a usable state
+ * @param stack The stack to clear of elements and free internally
+ */
+CTL_OVERLOADABLE
+static inline void Stack_Clear(Stack(T_) * stack) {
+    Stack_Free(stack->base);
     stack->base = NULL;
     stack->head = NULL;
 
-    stack->count = 0;
+    stack->count    = 0;
     stack->capacity = 0;
 }
 
-bool Stack_Shrink(T)(Stack(T)* stack)
-{
+/**
+ * @brief Shrink the internal stack buffer to the minimum size capable of storing the stack's contents
+ * @param stack The stack to shrink the memory of
+ * @return True if the shrink succeeded, False otherwise
+ */
+CTL_OVERLOADABLE
+static inline bool Stack_Shrink(Stack(T_) * stack) {
     if (stack->capacity == stack->count) {
         return true;
     }
 
     if (stack->count == 0) {
-        free(stack->base);
+        Stack_Free(stack->base);
         stack->base = NULL;
         stack->head = NULL;
     } else {
         size_t shrunkCapacity = sizeof(T) * stack->count;
-        T* shrunkBuffer = realloc(stack->base, shrunkCapacity);
+        T*     shrunkBuffer   = Stack_Realloc(stack->base, shrunkCapacity);
         if (shrunkBuffer == NULL) {
             return false;
         }
@@ -299,19 +358,14 @@ bool Stack_Shrink(T)(Stack(T)* stack)
 
 // cleanup macros
 #undef T
-#undef stack_init_capacity
-#undef stack_grow
-#undef malloc
-#undef realloc
-#undef free
-#undef max
-#undef min
+#undef T_
 
-#undef _DEFAULT_ALLOCATOR
+#undef Stack_Max
+#undef Stack_Min
 
-#undef REQ_PARAM_type
-#undef OPT_PARAM_init_capacity
-#undef OPT_PARAM_grow
-#undef OPT_PARAM_malloc
-#undef OPT_PARAM_realloc
-#undef OPT_PARAM_free
+#undef Stack_Type
+#undef Stack_InitCapacity
+#undef Stack_Grow
+#undef Stack_Malloc
+#undef Stack_Realloc
+#undef Stack_Free

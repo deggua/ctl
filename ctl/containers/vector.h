@@ -1,3 +1,7 @@
+// TODO: Add an overload for passing single elements by value
+// TODO: Small vector optimization
+// TODO: Deepcopy function
+
 /* --------- PUBLIC API ---------- */
 
 // Include Parameters:
@@ -298,11 +302,11 @@ static inline bool Vector_InsertMany(Vector(T_) * vec, size_t index, T elems[], 
 
     // copy elements from elems to their new position starting at the end of their section in the vector
     for (size_t ii = index + length - 1; ii > index; --ii) {
-        vec->at[ii] = (T)elems[ii - index];
+        vec->at[ii] = elems[ii - index];
     }
 
     // copy first element in elems to index
-    vec->at[index] = (T)elems[0];
+    vec->at[index] = elems[0];
 
     vec->length += length;
 

@@ -3,6 +3,7 @@
 // TODO: The Grow function shouldn't require a lookup when enumerating keys, provide another API to return the index
 // TODO: Provide hash functions for all builtin types (float, pointers, char*, ints)
 // TODO: Maybe Dict_Clear should reset the dict's allocation? Would be more in line with vector
+// TODO: Deepcopy function
 
 /* --------- PUBLIC API ---------- */
 
@@ -43,6 +44,7 @@ Provided hash functions:
     void*           ->
     char*           ->
 */
+/* --------- END PUBLIC API ---------- */
 
 #include <assert.h>
 #include <immintrin.h>
@@ -84,8 +86,6 @@ Provided hash functions:
 #    define Dict_ValueGroup(Tkey, Tval) CTL_CONCAT3(DictValueGroup, Tkey, Tval)
 
 #    define Dict_New(Tkey, Tval) CTL_CONCAT3(Dict_New, Tkey, Tval)
-
-/* --------- END PUBLIC API ---------- */
 #endif
 
 #if !defined(Dict_KeyType) || !defined(Dict_ValueType)
@@ -244,7 +244,7 @@ static inline bool Dict_Init(Dict(Tkey_, Tval_) * dict, size_t capacity) {
 /**
  * @brief Allocates and initializes a dict on the heap
  * @param capacity The initial capacity of the dict
- * @return A pointer to the dict on the heap
+ * @return A pointer to the dict on the heap, or NULL if the allocation failed
  * @note If capacity is not of the form 2^N * 16, it is rounded up to the next suitable form (e.g. 0 -> 16, 17 -> 32,
  * etc)
  */
@@ -261,7 +261,7 @@ static inline Dict(Tkey_, Tval_) * Dict_New(Tkey_, Tval_)(size_t capacity) {
 /**
  * @brief Uninitializes a dict, which then allows it to be discarded without leaking memory
  * @param dict The dict to uninitialize
- * @warning This should only be used in conjunction with @ref Dict_Init
+ * @warning This function should only be used in conjunction with @ref Dict_Init
  */
 CTL_OVERLOADABLE
 static inline void Dict_Uninit(Dict(Tkey_, Tval_) * dict) {
@@ -271,7 +271,7 @@ static inline void Dict_Uninit(Dict(Tkey_, Tval_) * dict) {
 /**
  * @brief Deletes a dict that was allocated on the heap
  * @param dict The dict to delete
- * @warning This should only be used in conjunction with @ref Dict_New
+ * @warning This function should only be used in conjunction with @ref Dict_New
  */
 CTL_OVERLOADABLE
 static inline void Dict_Delete(Dict(Tkey_, Tval_) * dict) {
