@@ -89,8 +89,6 @@ IndentRequires: false
 IndentWidth: 4
 IndentWrappedFunctionNames: false
 
-Language: Cpp
-
 MaxEmptyLinesToKeep: 1
 
 NamespaceIndentation: All

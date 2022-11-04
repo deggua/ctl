@@ -19,7 +19,8 @@ The type of the value stored in the dictionary:
 A comparison function for the key type which returns true if the keys match and false otherwise
     #define Dict_CompareKey(key1, key2)  (key1 == key2)
 
-A hash function for the key type which results in a size_t, a default hash function is provided for most integral types
+A hash function for the key type which results in a uint32_t, a default hash function is provided for most integral
+types
     #define Dict_HashKey(key)            [See 'Provided hash functions']
 
 The maximum load before the table is resized (out of 1024):
@@ -39,10 +40,8 @@ Default: free
     #define Dict_Free(ptr)               free(ptr)
 
 Provided hash functions:
-    float, double   ->
-    int, long, etc  -> xor, multiply, shift
-    void*           ->
-    char*           ->
+    float, double, stdint types = 3-round xor-shift-multiply
+    char*                       = FNV1a
 */
 /* --------- END PUBLIC API ---------- */
 
@@ -62,6 +61,10 @@ Provided hash functions:
 
 #    if !defined(CTL_OVERLOADABLE)
 #        define CTL_OVERLOADABLE __attribute__((overloadable))
+#    endif
+
+#    if !defined(CTL_WEAK)
+#        define CTL_WEAK __attribute__((weak))
 #    endif
 
 #    if !defined(CTL_NEXT_POW2)
@@ -93,15 +96,86 @@ Provided hash functions:
 #endif
 
 #if !defined(Dict_HashKey)
-#    define Dict_HashKey(key) ((size_t)(key))
+#    if !defined(Dict_HashKey_Defaults)
+#        define Dict_HashKey_Defaults
+
+static inline uint32_t Dict_Hash32(uint32_t x) {
+    x ^= x >> 17;
+    x *= 0xed5ad4bb;
+    x ^= x >> 11;
+    x *= 0xac4c1b51;
+    x ^= x >> 15;
+    x *= 0x31848bab;
+    x ^= x >> 14;
+    return x;
+}
+
+static inline uint32_t Dict_HashKey_U8(uint8_t key) {
+    return Dict_Hash32(key);
+}
+
+static inline uint32_t Dict_HashKey_U16(uint16_t key) {
+    return Dict_Hash32(key);
+}
+
+static inline uint32_t Dict_HashKey_U32(uint32_t key) {
+    return Dict_Hash32(key);
+}
+
+static inline uint32_t Dict_HashKey_U64(uint64_t key) {
+    return Dict_Hash32((uint32_t)key) ^ Dict_Hash32((uint32_t)(key >> 32));
+}
+
+static inline uint32_t Dict_HashKey_F32(float key) {
+    union {
+        float    f32;
+        uint32_t u32;
+    } conv = {.f32 = key};
+
+    _Static_assert(sizeof(float) == sizeof(uint32_t), "float isn't 32 bits");
+    return Dict_Hash32(conv.u32);
+}
+
+static inline uint32_t Dict_HashKey_F64(double key) {
+    union {
+        double   f64;
+        uint64_t u64;
+    } conv = {.f64 = key};
+
+    _Static_assert(sizeof(double) == sizeof(uint64_t), "double isn't 64 bits");
+    return Dict_HashKey_U64(conv.u64);
+}
+
+static inline uint32_t Dict_HashKey_Str(char* str) {
+    uint64_t hash = 0xcbf29ce484222325;
+
+    while (*str++) {
+        hash ^= *str;
+        hash *= 0x100000001b3;
+    }
+
+    return (uint32_t)hash ^ (uint32_t)(hash >> 32);
+}
+
+#    endif
+
+#    define Dict_HashKey(key) \
+        _Generic((key),                   \
+            uint8_t:    Dict_HashKey_U8,  \
+            int8_t:     Dict_HashKey_U8,  \
+            uint16_t:   Dict_HashKey_U16, \
+            int16_t:    Dict_HashKey_U16, \
+            uint32_t:   Dict_HashKey_U32, \
+            int32_t:    Dict_HashKey_U32, \
+            uint64_t:   Dict_HashKey_U64, \
+            int64_t:    Dict_HashKey_U64, \
+            float:      Dict_HashKey_F32, \
+            double:     Dict_HashKey_F64, \
+            char*:      Dict_HashKey_Str)(key)
 #endif
 
 #if !defined(Dict_CompareKey)
 #    define Dict_CompareKey(key1, key2) ((bool)(key1 == key2))
-#endif
-
-#if !defined(Dict_InitCapacity)
-#    define Dict_InitCapacity 16
 #endif
 
 #if !defined(Dict_MaxLoad)
@@ -216,8 +290,8 @@ static inline bool Dict_Grow(Dict(Tkey_, Tval_) * dict);
  * @param dict A pointer to the dict to initialize
  * @param capacity The initial capacity of the dict
  * @return True if the initialization succeeded, false otherwise
- * @note If capacity is not of the form 2^N * 16, it is rounded up to the next suitable form (e.g. 0 -> 16, 17 -> 32,
- * etc)
+ * @note If capacity is not of the form 2^N * 16, it is rounded up to the next suitable form (e.g. 0 -> 16,
+ * 17 -> 32, etc)
  */
 CTL_OVERLOADABLE
 static inline bool Dict_Init(Dict(Tkey_, Tval_) * dict, size_t capacity) {
@@ -245,8 +319,8 @@ static inline bool Dict_Init(Dict(Tkey_, Tval_) * dict, size_t capacity) {
  * @brief Allocates and initializes a dict on the heap
  * @param capacity The initial capacity of the dict
  * @return A pointer to the dict on the heap, or NULL if the allocation failed
- * @note If capacity is not of the form 2^N * 16, it is rounded up to the next suitable form (e.g. 0 -> 16, 17 -> 32,
- * etc)
+ * @note If capacity is not of the form 2^N * 16, it is rounded up to the next suitable form (e.g. 0 -> 16,
+ * 17 -> 32, etc)
  */
 static inline Dict(Tkey_, Tval_) * Dict_New(Tkey_, Tval_)(size_t capacity) {
     Dict(Tkey_, Tval_)* dict = Dict_Malloc(sizeof(*dict));
@@ -281,17 +355,19 @@ static inline void Dict_Delete(Dict(Tkey_, Tval_) * dict) {
 
 CTL_OVERLOADABLE
 static inline bool
-Dict_Find(Dict(Tkey_, Tval_) * dict, Tkey key, size_t hash, size_t* groupIndexOut, size_t* slotIndexOut) {
+Dict_Find(Dict(Tkey_, Tval_) * dict, Tkey key, uint32_t hash, size_t* groupIndexOut, size_t* slotIndexOut) {
     size_t        groupIndex       = hash & (dict->capacity / 16 - 1);
     Dict_Metadata expectedMetadata = {.hlow = hash, .occupied = true};
 
     // look through the dict for a match
-    // NOTE: we don't bother to provide a termination condition because the table should always have an empty entry
+    // NOTE: we don't bother to provide a termination condition because the table should always have an
+    // empty entry
     while (true) {
         // compare a group at a time via SIMD (16 in one go)
         uint16_t mask = Dict_CompareBitmask(dict->metadataGroup[groupIndex], expectedMetadata.u8);
 
-        // if bits are set in the mask, check each of the set bit positions (corresponding to positions in the group)
+        // if bits are set in the mask, check each of the set bit positions (corresponding to positions in
+        // the group)
         for (int imask = mask, bitpos = 0; imask != 0; imask &= ~(1 << bitpos)) {
             bitpos = ffs(mask) - 1;
             if (Dict_CompareKey(key, dict->keyGroup[groupIndex].key[bitpos])) {
@@ -324,8 +400,8 @@ Dict_Find(Dict(Tkey_, Tval_) * dict, Tkey key, size_t hash, size_t* groupIndexOu
  */
 CTL_OVERLOADABLE
 static inline bool Dict_Get(Dict(Tkey_, Tval_) * dict, Tkey key, Tval* outVal) {
-    size_t hash = Dict_HashKey(key);
-    size_t groupIndex, slotIndex;
+    uint32_t hash = Dict_HashKey(key);
+    size_t   groupIndex, slotIndex;
     if (Dict_Find(dict, key, hash, &groupIndex, &slotIndex)) {
         *outVal = dict->valueGroup[groupIndex].val[slotIndex];
         return true;
@@ -340,21 +416,22 @@ static inline bool Dict_Get(Dict(Tkey_, Tval_) * dict, Tkey key, Tval* outVal) {
  * @param key The key to act as the unique identifier for the value
  * @param val The value to store associated with key
  * @return True if the <key, value> pair was inserted successfully, false otherwise
- * @warning Current behavior is to not overwrite the key, this can have implications if two separate key allocations
- * with identical hashes are used and the dict is used as a way to track these allocations (e.g. 2 malloc'd char* =
- * "str", the 2nd insertion doesn't store the pointer to the dict, which if left un-free'd would be a leak)
+ * @warning Current behavior is to not overwrite the key, this can have implications if two separate key
+ * allocations with identical hashes are used and the dict is used as a way to track these allocations (e.g.
+ * 2 malloc'd char* = "str", the 2nd insertion doesn't store the pointer to the dict, which if left
+ * un-free'd would be a leak)
  */
 CTL_OVERLOADABLE
 static inline bool Dict_Set(Dict(Tkey_, Tval_) * dict, Tkey key, Tval val) {
-    size_t hash = Dict_HashKey(key);
-    size_t groupIndex, slotIndex;
+    uint32_t hash = Dict_HashKey(key);
+    size_t   groupIndex, slotIndex;
     if (Dict_Find(dict, key, hash, &groupIndex, &slotIndex)) {
         // key was found in the dict already, overwrite the value
         // TODO: should we overwrite the key? e.g. char* identical strings in different memory locations?
         dict->valueGroup[groupIndex].val[slotIndex] = val;
     } else {
-        // key was not found in the dict already, we get the group index it should go in, but we need to determine the
-        // next open slot from the slot mask
+        // key was not found in the dict already, we get the group index it should go in, but we need to
+        // determine the next open slot from the slot mask
         size_t slotMask = slotIndex;
         int    bitpos   = ffs(~(uint16_t)slotMask) - 1;
 
@@ -397,7 +474,8 @@ static inline void Dict_Clear(Dict(Tkey_, Tval_) * dict) {
  * existing key in the dict
  * @param dict The dictionary to enumerate
  * @param prevKey The previous key, passing NULL will give provide the first key in the dict
- * @return Returns NULL if @param prevKey was the last key in the dict, otherwise returns @param prevKey successor
+ * @return Returns NULL if @param prevKey was the last key in the dict, otherwise returns @param prevKey
+ * successor
  */
 CTL_OVERLOADABLE
 static inline Tkey* Dict_EnumerateKeys(Dict(Tkey_, Tval_) * dict, Tkey* prevKey) {
@@ -439,11 +517,12 @@ static inline Tkey* Dict_EnumerateKeys(Dict(Tkey_, Tval_) * dict, Tkey* prevKey)
 }
 
 /**
- * @brief Iteratively enumerate values within the dict, returns a pointer to the next occupied value given an
- * existing value in the dict
+ * @brief Iteratively enumerate values within the dict, returns a pointer to the next occupied value given
+ * an existing value in the dict
  * @param dict The dictionary to enumerate
  * @param prevValue The previous value, passing NULL will give provide the first value in the dict
- * @return Returns NULL if @param prevValue was the last value in the dict, otherwise returns @param prevValue successor
+ * @return Returns NULL if @param prevValue was the last value in the dict, otherwise returns @param
+ * prevValue successor
  */
 CTL_OVERLOADABLE
 static inline Tval* Dict_EnumerateValues(Dict(Tkey_, Tval_) * dict, Tval* prevValue) {
