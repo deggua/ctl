@@ -1,43 +1,38 @@
 // TODO: The code shared between Dict_EnumerateKeys and Dict_EnumerateValues should be commonized somehow
 // TODO: Cleanup Dict_EnumerateKeys/Dict_EnumerateValues, the logic is confusing
 // TODO: The Grow function shouldn't require a lookup when enumerating keys, provide another API to return the index
-// TODO: Provide hash functions for all builtin types (float, pointers, char*, ints)
 // TODO: Maybe Dict_Clear should reset the dict's allocation? Would be more in line with vector
-// TODO: Deepcopy function
+// TODO: Deepcopy function?
 
 /* --------- PUBLIC API ---------- */
 
 /* Include Parameters:
 The type of the key for the dictionary:
-    #define Dict_KeyType        Tkey
-    #define Dict_KeyType_Alias Dict_KeyType
+    #define Dict_KeyType                    Tkey
+    #define Dict_KeyType_Alias              Dict_KeyType
 
 The type of the value stored in the dictionary:
-    #define Dict_ValueType               Tval
-    #define Dict_ValueType_Alias Dict_ValueType
+    #define Dict_ValueType                  Tval
+    #define Dict_ValueType_Alias            Dict_ValueType
 
 A comparison function for the key type which returns true if the keys match and false otherwise
-    #define Dict_CompareKey(key1, key2)  (key1 == key2)
+    #define Dict_CompareKey(key1, key2)     (key1 == key2)
 
 A hash function for the key type which results in a uint32_t, a default hash function is provided for most integral
 types
-    #define Dict_HashKey(key)            [See 'Provided hash functions']
-
-The maximum load before the table is resized (out of 1024):
-Default: 512/1024 (50%)
-    #define Dict_MaxLoad 512
+    #define Dict_HashKey(key)               [See 'Provided hash functions']
 
 An allocator function (obeying ISO C's malloc/calloc semantics):
 Default: malloc
-    #define Dict_Malloc(bytes)           malloc(bytes)
+    #define Dict_Malloc(bytes)              malloc(bytes)
 
 A reallocator function (obeying ISO C's realloc semantics):
 Default: realloc
-    #define Dict_Realloc(ptr, bytes)     realloc(ptr, bytes)
+    #define Dict_Realloc(ptr, bytes)        realloc(ptr, bytes)
 
 A free function (obeying ISO C's free semantics):
 Default: free
-    #define Dict_Free(ptr)               free(ptr)
+    #define Dict_Free(ptr)                  free(ptr)
 
 Provided hash functions:
     float, double, stdint types = 3-round xor-shift-multiply
@@ -61,10 +56,6 @@ Provided hash functions:
 
 #    if !defined(CTL_OVERLOADABLE)
 #        define CTL_OVERLOADABLE __attribute__((overloadable))
-#    endif
-
-#    if !defined(CTL_WEAK)
-#        define CTL_WEAK __attribute__((weak))
 #    endif
 
 #    if !defined(CTL_NEXT_POW2)
@@ -96,8 +87,8 @@ Provided hash functions:
 #endif
 
 #if !defined(Dict_HashKey)
-#    if !defined(Dict_HashKey_Defaults)
-#        define Dict_HashKey_Defaults
+#    if !defined(CTL_DICT_COMMON_HASH)
+#        define CTL_DICT_COMMON_HASH
 
 static inline uint32_t Dict_Hash32(uint32_t x) {
     x ^= x >> 17;
@@ -178,32 +169,30 @@ static inline uint32_t Dict_HashKey_Str(char* str) {
 #    define Dict_CompareKey(key1, key2) ((bool)(key1 == key2))
 #endif
 
-#if !defined(Dict_MaxLoad)
-#    define Dict_MaxLoad 512
-#endif
+#define Dict_MaxLoad 512
 
 #if !defined(Dict_Malloc)
-#    if !defined(Dict_DefaultAllocator)
-#        define Dict_DefaultAllocator
+#    if !defined(CTL_DICT_DEFAULT_ALLOC)
+#        define CTL_DICT_DEFAULT_ALLOC
 #    endif
 #    define Dict_Malloc(bytes) calloc(1, bytes)
 #endif
 
 #if !defined(Dict_Realloc)
-#    if !defined(Dict_DefaultAllocator)
+#    if !defined(CTL_DICT_DEFAULT_ALLOC)
 #        warning "Non-default malloc used with default realloc"
 #    endif
 #    define Dict_Realloc realloc
 #endif
 
 #if !defined(Dict_Free)
-#    if !defined(Dict_DefaultAllocator)
+#    if !defined(CTL_DICT_DEFAULT_ALLOC)
 #        warning "Non-default malloc used with default free"
 #    endif
 #    define Dict_Free free
 #endif
 
-#if defined(Dict_DefaultAllocator)
+#if defined(CTL_DICT_DEFAULT_ALLOC)
 #    include <stdlib.h>
 #endif
 
@@ -224,8 +213,8 @@ static inline uint32_t Dict_HashKey_Str(char* str) {
 #    define Tval_ Dict_ValueType_Alias
 #endif
 
-#if !defined(CTL_DICT_COMMON)
-#    define CTL_DICT_COMMON
+#if !defined(CTL_DICT_COMMON_TYPES)
+#    define CTL_DICT_COMMON_TYPES
 
 typedef union {
     __m128d  d128;
@@ -261,6 +250,7 @@ static inline uint16_t Dict_OccupiedBitmask(Dict_MetadataGroup metadata) {
     uint16_t mask = _mm_movemask_epi8(metadata.v128.i128);
     return mask;
 }
+
 #endif
 
 typedef struct Dict_KeyGroup(Tkey_, Tval_) {
@@ -594,13 +584,11 @@ static inline bool Dict_Grow(Dict(Tkey_, Tval_) * dict) {
 
 #undef Dict_CompareKey
 #undef Dict_HashKey
-#undef Dict_InitCapacity
-#undef Dict_MaxLoad
 
 #undef Dict_Malloc
 #undef Dict_Realloc
 #undef Dict_Free
-#undef Dict_DefaultAllocator
+#undef CTL_DICT_DEFAULT_ALLOC
 
 #undef Tkey
 #undef Tval
