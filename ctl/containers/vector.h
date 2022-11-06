@@ -1,51 +1,36 @@
 // TODO: Add an overload for passing single elements by value
 // TODO: Small vector optimization
-// TODO: Deepcopy function
 
-/* --------- PUBLIC API ---------- */
+/* --- Templated Vector Type --- */
+/* Usage:
 
-// Include Parameters:
-//  The type of the elements the vector should contain:
-//      #define Vector_Type         T
-//
-//  The name to use to reference the type specific macros:
-//      Default: Vector_Type
-//      #define Vector_Type_Alias   CustomName
-//
-//  The growth function the vector should use when it needs to expand:
-//      Default: (3 * old_size + 1) / 2
-//      #define Vector_Grow(old_size)         (3 * old_size + 1) / 2
-//
-//  An allocator function (obeying ISO C's malloc/calloc semantics):
-//      Default: malloc
-//      #define Vector_Malloc(bytes)          malloc(bytes)
-//
-//  A reallocator function (obeying ISO C's realloc semantics):
-//      Default: realloc
-//      #define Vector_Realloc(ptr, bytes)    realloc(ptr, bytes)
-//
-//  A free function (obeying ISO C's free semantics):
-//      Default: free
-//      #define Vector_Free(ptr)              free(ptr)
+    -- Required --
+        Vector_Type:  Type to store in the vector
+
+    -- Possibly Required --
+        Vector_Type_Alias:  Alias for the vector type
+
+    -- Optional --
+        Vector_Grow(old_size): The growth function the vector uses when expanding
+
+        Vector_Malloc(bytes):       An allocator function (obeying ISO C's malloc/calloc semantics)
+        Vector_Realloc(ptr, bytes): A reallocator function (obeying ISO C's realloc semantics)
+        Vector_Free(ptr):           A free function (obeying ISO C's free semantics)
+*/
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <string.h>
+
+#include "../common/ctl.h"
 
 #if !defined(CTL_VECTOR_INCLUDED)
 #    define CTL_VECTOR_INCLUDED
-#    if !defined(CTL_CONCAT2)
-#        define CTL_CONCAT2_(a, b) a##_##b
-#        define CTL_CONCAT2(a, b)  CTL_CONCAT2_(a, b)
-#    endif
 
-#    if !defined(CTL_OVERLOADABLE)
-#        define CTL_OVERLOADABLE __attribute__((overloadable))
-#    endif
+#    define Vector(T)     CONCAT(Vector, T)
+#    define Vector_New(T) CONCAT(Vector_New, T)
 
-#    define Vector(T)     CTL_CONCAT2(Vector, T)
-#    define Vector_New(T) CTL_CONCAT2(Vector_New, T)
-
-/* --------- END PUBLIC API ---------- */
+#    define Vector_Default_Capacity 16
 #endif
 
 #if !defined(Vector_Type)
@@ -54,10 +39,6 @@
 
 #if !defined(Vector_Type_Alias)
 #    define Vector_Type_Alias Vector_Type
-#endif
-
-#if !defined(Vector_Init_Capacity)
-#    define Vector_Init_Capacity 16
 #endif
 
 #if !defined(Vector_Grow)
@@ -92,9 +73,8 @@
 #    include <stdlib.h>
 #endif
 
-#define T                Vector_Type
-#define T_               Vector_Type_Alias
-#define Vector_Max(a, b) ((a) > (b) ? (a) : (b))
+#define T  Vector_Type
+#define T_ Vector_Type_Alias
 
 typedef struct Vector(T_) {
     T*     at;
@@ -165,13 +145,13 @@ static inline void Vector_Delete(Vector(T_) * vec) {
 
 CTL_OVERLOADABLE
 static inline bool Vector_GrowTo(Vector(T_) * vec, size_t length) {
-    T* newBuffer = realloc(vec->at, sizeof(T) * length);
+    T* new_buffer = realloc(vec->at, sizeof(T) * length);
 
-    if (newBuffer == NULL) {
+    if (new_buffer == NULL) {
         return false;
     }
 
-    vec->at       = newBuffer;
+    vec->at       = new_buffer;
     vec->capacity = length;
 
     return true;
@@ -202,18 +182,18 @@ static inline bool Vector_Reserve(Vector(T_) * vec, size_t length) {
  * @warning You cannot push from a vector to itself unless you guarantee it won't need to resize
  */
 CTL_OVERLOADABLE
-static inline bool Vector_PushMany(Vector(T_) * vec, T elems[], size_t length) {
+static inline bool Vector_PushMany(Vector(T_) * vec, T* elems, size_t length) {
     // check if we need to grow the vector
     if (vec->capacity < vec->length + length) {
-        size_t newCapacity;
+        size_t new_capacity;
 
         if (vec->capacity == 0) {
-            newCapacity = Vector_Max(vec->length + length, Vector_Init_Capacity);
+            new_capacity = CTL_MAX(vec->length + length, Vector_Default_Capacity);
         } else {
-            newCapacity = Vector_Max(vec->length + length, Vector_Grow(vec->capacity));
+            new_capacity = CTL_MAX(vec->length + length, Vector_Grow(vec->capacity));
         }
 
-        if (!Vector_GrowTo(vec, newCapacity)) {
+        if (!Vector_GrowTo(vec, new_capacity)) {
             return false;
         }
     }
@@ -239,22 +219,25 @@ static inline bool Vector_Push(Vector(T_) * vec, T* elem) {
     return Vector_PushMany(vec, elem, 1);
 }
 
+CTL_OVERLOADABLE
+static inline bool Vector_Push(Vector(T_) * vec, T elem) {
+    return Vector_PushMany(vec, &elem, 1);
+}
+
 /**
  * @brief Extend a vector's size by some number of elements, essentially allocating in-place
  * @param vec The vector to extend
  * @param size The size to extend the vector by (i.e vec->length += length)
- * @return The index (> 0, if the operation succeeded) of the first of the extended elements, otherwise -1
- * @note Typical usage for this would be to know the index of an element in the vector before constructing it, useful
- * for vector based data structures that use indices to refer to other nodes
+ * @return True if the operation succeeded, false otherwise
+ * @note Allows you to construct objects inside the vector
  */
 CTL_OVERLOADABLE
-static inline ssize_t Vector_Extend(Vector(T_) * vec, size_t length) {
+static inline bool Vector_ExtendBy(Vector(T_) * vec, size_t length) {
     if (Vector_Reserve(vec, vec->length + length)) {
-        size_t oldLength = vec->length;
         vec->length += length;
-        return oldLength;
+        return true;
     } else {
-        return -1;
+        return false;
     }
 }
 
@@ -268,7 +251,7 @@ static inline ssize_t Vector_Extend(Vector(T_) * vec, size_t length) {
  * @warning You cannot insert from a vector to itself
  */
 CTL_OVERLOADABLE
-static inline bool Vector_InsertMany(Vector(T_) * vec, size_t index, T elems[], size_t length) {
+static inline bool Vector_InsertMany(Vector(T_) * vec, size_t index, T* elems, size_t length) {
     if (length == 0) {
         // nop
         return true;
@@ -282,15 +265,15 @@ static inline bool Vector_InsertMany(Vector(T_) * vec, size_t index, T elems[], 
 
     // check if we need to grow the vector
     if (vec->capacity < vec->length + length) {
-        size_t newCapacity;
+        size_t new_capacity;
 
         if (vec->capacity == 0) {
-            newCapacity = Vector_Max(vec->length + length, Vector_Init_Capacity);
+            new_capacity = CTL_MAX(vec->length + length, Vector_Default_Capacity);
         } else {
-            newCapacity = Vector_Max(vec->length + length, Vector_Grow(vec->capacity));
+            new_capacity = CTL_MAX(vec->length + length, Vector_Grow(vec->capacity));
         }
 
-        if (!Vector_GrowTo(vec, newCapacity)) {
+        if (!Vector_GrowTo(vec, new_capacity)) {
             return false;
         }
     }
@@ -326,6 +309,11 @@ static inline bool Vector_Insert(Vector(T_) * vec, size_t index, T* elem) {
     return Vector_InsertMany(vec, index, elem, 1);
 }
 
+CTL_OVERLOADABLE
+static inline bool Vector_Insert(Vector(T_) * vec, size_t index, T elem) {
+    return Vector_InsertMany(vec, index, &elem, 1);
+}
+
 /**
  * @brief Shrink a vector's buffer to fit its current size, reducing memory usage
  * @param vec The vector to shrink
@@ -346,14 +334,14 @@ static inline bool Vector_Shrink(Vector(T_) * vec) {
         Vector_Free(vec->at);
         vec->at = NULL;
     } else {
-        size_t shrunkCapacity = sizeof(T) * vec->length;
-        T*     shrunkBuffer   = Vector_Realloc(vec->at, shrunkCapacity);
+        size_t shrunk_capacity = sizeof(T) * vec->length;
+        T*     shrunk_buffer   = Vector_Realloc(vec->at, shrunk_capacity);
 
-        if (shrunkBuffer == NULL) {
+        if (shrunk_buffer == NULL) {
             return false;
         }
 
-        vec->at = shrunkBuffer;
+        vec->at = shrunk_buffer;
     }
 
     vec->capacity = vec->length;
@@ -417,7 +405,7 @@ static inline void Vector_Remove(Vector(T_) * vec, size_t index) {
  * e0} (for len = N)
  */
 CTL_OVERLOADABLE
-static inline bool Vector_PopMany(Vector(T_) * vec, T dest[], size_t len) {
+static inline bool Vector_PopMany(Vector(T_) * vec, T* dest, size_t len) {
     if (len > vec->length) {
         return false;
     }
@@ -431,7 +419,7 @@ static inline bool Vector_PopMany(Vector(T_) * vec, T dest[], size_t len) {
 }
 
 /**
- * @brief Pop a single element from @param vec to @param dest
+ * @brief Pop a single element from the end of @param vec to @param dest
  * @param vec The vector to pop from
  * @param dest The destination of the element
  * @return True if the operation succeeded, false otherwise
@@ -439,6 +427,24 @@ static inline bool Vector_PopMany(Vector(T_) * vec, T dest[], size_t len) {
 CTL_OVERLOADABLE
 static inline bool Vector_Pop(Vector(T_) * vec, T* dest) {
     return Vector_PopMany(vec, dest, 1);
+}
+
+/**
+ * @brief Copy the contents of one vector to another
+ * @param src_vec The source of vector contents to copy from
+ * @param dst_vec The destination where the contents of the source vector will be copied to
+ * @return True if the operation succeeded, false otherwise
+ */
+CTL_OVERLOADABLE
+static inline bool Vector_Copy(Vector(T_) * src_vec, Vector(T_) * dst_vec) {
+    if (!Vector_Reserve(dst_vec, src_vec->length)) {
+        return false;
+    }
+
+    memcpy(dst_vec->at, src_vec->at, src_vec->length * sizeof(T));
+    dst_vec->length = src_vec->length;
+
+    return true;
 }
 
 // cleanup macros
@@ -449,7 +455,6 @@ static inline bool Vector_Pop(Vector(T_) * vec, T* dest) {
 #undef Vector_Malloc
 #undef Vector_Realloc
 #undef Vector_Free
-#undef Vector_Max
 
 #undef CTL_DEFAULT_ALLOCATOR
 

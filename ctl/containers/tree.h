@@ -1,138 +1,88 @@
-#include <stddef.h>
 #include <stdbool.h>
+#include <stddef.h>
 
-#if !defined(_TREE_INCLUDED)
-#   define _TREE_INCLUDED
-#   if !defined(_CONCAT3)
-#       define _CONCAT3_(a, b, c) a ## _ ## b ## _ ## c
-#       define _CONCAT3(a, b, c) _CONCAT3_(a, b, c)
-#   endif
+#include "../common/ctl.h"
 
-/* --------- PUBLIC API ---------- */
+#if !defined(CTL_TREE_INCLUDED)
+#    define CTL_TREE_INCLUDED
 
-// Include Parameters:
-//  The type of the elements the tree should contain:
-//      #define REQ_PARAM_type                  T
-//
-//  The number of children the tree can have:
-//      #define REQ_PARAM_children              N
-//
-//  An allocator function (obeying ISO C's malloc/calloc semantics):
-//      Default: malloc
-//      #define OPT_PARAM_malloc(bytes)        malloc(bytes)
-//
-//  A reallocator function (obeying ISO C's realloc semantics):
-//      Default: realloc
-//      #define OPT_PARAM_realloc(ptr, bytes)  realloc(ptr, bytes)
-//
-//  A free function (obeying ISO C's free semantics):
-//      Default: free
-//      #define OPT_PARAM_free(ptr)            free(ptr)
-
-// Functions:
-//  The tree type
-#define TreeNode(T, N)              _CONCAT3(_TreeNode, T, N)
-
-// Create a new stack
-//  TreeNode(T, N)* Tree_New()
-#define Tree_New(T, N)              _CONCAT3(_Tree_New, T, N)
-
-// Delete a tree node
-//  void Tree_Delete(TreeNode(T, N)* node)
-#define Tree_DeleteNode(T, N)       _CONCAT3(_Tree_DeleteNode, T, N)
-
-// Recursively delete a tree
-//  void Tree_DeleteTree(TreeNode(T, N)* root)
-#define Tree_DeleteTree(T, N)       _CONCAT3(_Tree_DeleteTree, T, N)
-
-// Add node child to node parent
-//  ssize_t Tree_AddChild(TreeNode(T, N)* parent, TreeNode(T, N)* child)
-#define Tree_AddChild(T, N)         _CONCAT3(_Tree_AddChild, T, N)
-
-// Remove a child from a parent
-//  ssize_t Tree_RemoveChild(TreeNode(T, N)* parent, TreeNode(T, N)* child)
-#define Tree_RemoveChild(T, N)      _CONCAT3(_Tree_RemoveChild, T, N)
-
-
+#    define TreeNode(T, N) CONCAT(TreeNode, T, N)
+#    define Tree_New(T, N) CONCAT(Tree_New, T, N)
 
 /* --------- END PUBLIC API ---------- */
 #endif
 
-#if !defined (REQ_PARAM_type)
-#   error "Tree requires a type specialization"
+#if !defined(Tree_Type)
+#    error "Tree requires a type specialization"
 #endif
 
-#if !defined (REQ_PARAM_children)
-#   error "Tree requires a children specialization"
+#if !defined(Tree_Type_Alias)
+#    define Tree_Type_Alias Tree_Type
 #endif
 
-#if !defined (OPT_PARAM_malloc)
-#   if !defined (_DEFAULT_ALLOCATOR)
-#       define _DEFAULT_ALLOCATOR
-#   endif
-
-#   define OPT_PARAM_malloc(bytes) calloc(1, bytes)
+#if !defined(Tree_Children)
+#    error "Tree requires a children specialization"
 #endif
 
-#if !defined (OPT_PARAM_realloc)
-#   if !defined (_DEFAULT_ALLOCATOR)
-#       warning "Non-default malloc used with default realloc"
-#   endif
+#if !defined(Tree_Malloc)
+#    if !defined(CTL_DEFAULT_ALLOCATOR)
+#        define CTL_DEFAULT_ALLOCATOR
+#    endif
 
-#   define OPT_PARAM_realloc realloc
+#    define Tree_Malloc(bytes) calloc(1, bytes)
 #endif
 
-#if !defined (OPT_PARAM_free)
-#   if !defined (_DEFAULT_ALLOCATOR)
-#       warning "Non-default malloc used with default free"
-#   endif
+#if !defined(Tree_Realloc)
+#    if !defined(CTL_DEFAULT_ALLOCATOR)
+#        warning "Non-default malloc used with default realloc"
+#    endif
 
-#   define OPT_PARAM_free free
+#    define Tree_Realloc realloc
 #endif
 
-#if defined(_DEFAULT_ALLOCATOR)
-#   include <stdlib.h>
+#if !defined(Tree_Free)
+#    if !defined(CTL_DEFAULT_ALLOCATOR)
+#        warning "Non-default malloc used with default free"
+#    endif
+
+#    define Tree_Free free
 #endif
 
-// useful macros internally
+#if defined(CTL_DEFAULT_ALLOCATOR)
+#    include <stdlib.h>
+#endif
 
-#define T REQ_PARAM_type
-#define N REQ_PARAM_children
-#define malloc OPT_PARAM_malloc
-#define realloc OPT_PARAM_realloc
-#define free OPT_PARAM_free
+#define T  Tree_Type
+#define T_ Tree_Type_Alias
+#define N  Tree_Children
 
-// data types
-
-typedef struct TreeNode(T, N) {
-    struct TreeNode(T, N)* parent;
-    struct TreeNode(T, N)* child[N];
+typedef struct TreeNode(T_, N) {
+    struct TreeNode(T_, N) * parent;
+    struct TreeNode(T_, N) * child[N];
     T val;
-} TreeNode(T, N);
+}
+TreeNode(T_, N);
 
 // functions
 
-TreeNode(T, N)* Tree_New(T, N)(void)
-{
-    TreeNode(T, N)* node = malloc(sizeof(TreeNode(T, N)));
+TreeNode(T_, N) * Tree_New(T_, N)(void) {
+    TreeNode(T, N)* node = Tree_Malloc(sizeof(TreeNode(T_, N)));
     return node;
 }
 
-void Tree_DeleteNode(T, N)(TreeNode(T, N)* node)
-{
-    free(node);
+CTL_OVERLOADABLE
+static inline void Tree_DeleteNode(TreeNode(T_, N) * node) {
+    Tree_Free(node);
 }
 
-void Tree_DeleteTree(T, N)(TreeNode(T, N)* root)
-{
+void Tree_DeleteTree(TreeNode(T_, N) * root) {
     for (size_t ii = 0; ii < N; ++ii) {
-        Tree_DeleteNode(T, N)(root->child[ii]);
+        Tree_DeleteNode(root->child[ii]);
     }
-    Tree_DeleteNode(T, N)(root);
+    Tree_DeleteNode(root);
 }
 
-ssize_t Tree_AddChild(T, N)(TreeNode(T, N)* parent, TreeNode(T, N)* child)
-{
+ssize_t Tree_AddChild(TreeNode(T_, N) * parent, TreeNode(T_, N) * child) {
     for (size_t ii = 0; ii < N; ++ii) {
         if (parent->child[ii] == NULL) {
             parent->child[ii] = child;
@@ -143,8 +93,7 @@ ssize_t Tree_AddChild(T, N)(TreeNode(T, N)* parent, TreeNode(T, N)* child)
     return -1;
 }
 
-ssize_t Tree_RemoveChild(T, N)(TreeNode(T, N)* parent, TreeNode(T, N)* child)
-{
+ssize_t Tree_RemoveChild(TreeNode(T_, N) * parent, TreeNode(T_, N) * child) {
     for (size_t ii = 0; ii < N; ++ii) {
         if (parent->child[ii] == child) {
             parent->child[ii] = NULL;
@@ -157,15 +106,15 @@ ssize_t Tree_RemoveChild(T, N)(TreeNode(T, N)* parent, TreeNode(T, N)* child)
 
 // cleanup macros
 #undef T
+#undef T_
 #undef N
-#undef malloc
-#undef realloc
-#undef free
 
-#undef _DEFAULT_ALLOCATOR
+#undef CTL_DEFAULT_ALLOCATOR
 
-#undef REQ_PARAM_type
-#undef OPT_PARAM_children
-#undef OPT_PARAM_malloc
-#undef OPT_PARAM_realloc
-#undef OPT_PARAM_free
+#undef Tree_Type
+#undef Tree_Type_Alias
+#undef Tree_Children
+
+#undef Tree_Malloc
+#undef Tree_Realloc
+#undef Tree_Free

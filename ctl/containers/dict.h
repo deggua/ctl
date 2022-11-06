@@ -1,44 +1,33 @@
 // TODO: The code shared between Dict_EnumerateKeys and Dict_EnumerateValues should be commonized somehow
-// TODO: Cleanup Dict_EnumerateKeys/Dict_EnumerateValues, the logic is confusing
-// TODO: The Grow function shouldn't require a lookup when enumerating keys, provide another API to return the index
-// TODO: Maybe Dict_Clear should reset the dict's allocation? Would be more in line with vector
-// TODO: Deepcopy function?
+// TODO: Dict_Enumerate returning a Tuple(key, value)? Would work but the API might get ugly
+// TODO: Should we use a 64-bit hash function?
+// TODO: Should we use a ligher weight integer hashing function?
 
-/* --------- PUBLIC API ---------- */
+/* --- Templated Dictionary Type --- */
+/* Usage:
 
-/* Include Parameters:
-The type of the key for the dictionary:
-    #define Dict_KeyType                    Tkey
-    #define Dict_KeyType_Alias              Dict_KeyType
+    -- Required --
+        Dict_KeyType:   The key type for the dictionary, hashed, used to lookup value types in the dict
+        Dict_ValueType: The value type stored in the dictionary
 
-The type of the value stored in the dictionary:
-    #define Dict_ValueType                  Tval
-    #define Dict_ValueType_Alias            Dict_ValueType
+    -- Possibly Required --
+        Dict_KeyType_Alias:   Alias for the key type
+        Dict_ValueType_Alias: Alias for the value type
 
-A comparison function for the key type which returns true if the keys match and false otherwise
-    #define Dict_CompareKey(key1, key2)     (key1 == key2)
+        Dict_CompareKey(key1, key2): A comparison function for the key type
+        Dict_HashKey(key):           A hash function for the key type that results in a uint32_t, defaults provided
 
-A hash function for the key type which results in a uint32_t, a default hash function is provided for most integral
-types
-    #define Dict_HashKey(key)               [See 'Provided hash functions']
+    -- Optional --
+        Dict_Malloc(bytes):       An allocator function (obeying ISO C's malloc/calloc semantics) that zero's memory
+        Dict_Realloc(ptr, bytes): A reallocator function (obeying ISO C's realloc semantics)
+        Dict_Free(ptr):           A free function (obeying ISO C's free semantics)
 
-An allocator function (obeying ISO C's malloc/calloc semantics):
-Default: malloc
-    #define Dict_Malloc(bytes)              malloc(bytes)
-
-A reallocator function (obeying ISO C's realloc semantics):
-Default: realloc
-    #define Dict_Realloc(ptr, bytes)        realloc(ptr, bytes)
-
-A free function (obeying ISO C's free semantics):
-Default: free
-    #define Dict_Free(ptr)                  free(ptr)
-
-Provided hash functions:
-    float, double, stdint types = 3-round xor-shift-multiply
-    char*                       = FNV1a
+    -- Notes --
+        Hash functions are provided for most integral types:
+            float, double, int types -- 3 round xor-shift-multiply
+            char*                    -- FNV1a
+        Default compare key function is simple equality (key1 == key2)
 */
-/* --------- END PUBLIC API ---------- */
 
 #include <assert.h>
 #include <immintrin.h>
@@ -47,39 +36,17 @@ Provided hash functions:
 #include <stdint.h>
 #include <string.h>
 
+#include "../common/ctl.h"
+
 #if !defined(CTL_DICT_INCLUDED)
 #    define CTL_DICT_INCLUDED
-#    if !defined(CTL_CONCAT3_) && !defined(CTL_CONCAT3)
-#        define CTL_CONCAT3_(a, b, c) a##_##b##_##c
-#        define CTL_CONCAT3(a, b, c)  CTL_CONCAT3_(a, b, c)
-#    endif
 
-#    if !defined(CTL_OVERLOADABLE)
-#        define CTL_OVERLOADABLE __attribute__((overloadable))
-#    endif
+#    define Dict(Tkey, Tval)     CONCAT(Dict, Tkey, Tval)
+#    define Dict_New(Tkey, Tval) CONCAT(Dict_New, Tkey, Tval)
 
-#    if !defined(CTL_NEXT_POW2)
-#        define CTL_NEXT_POW2(x)                                       \
-            ({                                                         \
-                typeof(x) _x = x;                                      \
-                _x--;                                                  \
-                _x |= _x >> 1;                                         \
-                _x |= _x >> 2;                                         \
-                _x |= sizeof(_x) >= sizeof(uint8_t) ? (_x >> 4) : 0;   \
-                _x |= sizeof(_x) >= sizeof(uint16_t) ? (_x >> 8) : 0;  \
-                _x |= sizeof(_x) >= sizeof(uint32_t) ? (_x >> 16) : 0; \
-                _x |= sizeof(_x) >= sizeof(uint64_t) ? (_x >> 32) : 0; \
-                _x++;                                                  \
-                _x += (_x == 0);                                       \
-                _x;                                                    \
-            })
-#    endif
-
-#    define Dict(Tkey, Tval)            CTL_CONCAT3(Dict, Tkey, Tval)
-#    define Dict_KeyGroup(Tkey, Tval)   CTL_CONCAT3(DictKeyGroup, Tkey, Tval)
-#    define Dict_ValueGroup(Tkey, Tval) CTL_CONCAT3(DictValueGroup, Tkey, Tval)
-
-#    define Dict_New(Tkey, Tval) CTL_CONCAT3(Dict_New, Tkey, Tval)
+/* these are internal -- don't use these */
+#    define Dict_KeyGroup(Tkey, Tval)   CONCAT(DictKeyGroup, Tkey, Tval)
+#    define Dict_ValueGroup(Tkey, Tval) CONCAT(DictValueGroup, Tkey, Tval)
 #endif
 
 #if !defined(Dict_KeyType) || !defined(Dict_ValueType)
@@ -137,11 +104,11 @@ static inline uint32_t Dict_HashKey_F64(double key) {
     return Dict_HashKey_U64(conv.u64);
 }
 
-static inline uint32_t Dict_HashKey_Str(char* str) {
+static inline uint32_t Dict_HashKey_Str(const char* restrict str) {
     uint64_t hash = 0xcbf29ce484222325;
 
-    while (*str++) {
-        hash ^= *str;
+    while (*str) {
+        hash ^= *str++;
         hash *= 0x100000001b3;
     }
 
@@ -168,8 +135,6 @@ static inline uint32_t Dict_HashKey_Str(char* str) {
 #if !defined(Dict_CompareKey)
 #    define Dict_CompareKey(key1, key2) ((bool)(key1 == key2))
 #endif
-
-#define Dict_MaxLoad 512
 
 #if !defined(Dict_Malloc)
 #    if !defined(CTL_DICT_DEFAULT_ALLOC)
@@ -239,9 +204,9 @@ typedef union {
 } Dict_MetadataGroup;
 
 static inline uint16_t Dict_CompareBitmask(Dict_MetadataGroup metadata, uint8_t expected) {
-    __m128i  expectedVector = _mm_set1_epi8(expected);
-    __m128i  comparison     = _mm_cmpeq_epi8(expectedVector, metadata.v128.i128);
-    uint16_t mask           = _mm_movemask_epi8(comparison);
+    __m128i  exp_vector = _mm_set1_epi8(expected);
+    __m128i  comparison = _mm_cmpeq_epi8(exp_vector, metadata.v128.i128);
+    uint16_t mask       = _mm_movemask_epi8(comparison);
 
     return mask;
 }
@@ -266,9 +231,9 @@ Dict_ValueGroup(Tkey_, Tval_);
 typedef struct Dict(Tkey_, Tval_) {
     size_t capacity;
     size_t size;
-    Dict_KeyGroup(Tkey_, Tval_) * keyGroup;
-    Dict_ValueGroup(Tkey_, Tval_) * valueGroup;
-    Dict_MetadataGroup* metadataGroup;
+    Dict_KeyGroup(Tkey_, Tval_) * key_group;
+    Dict_ValueGroup(Tkey_, Tval_) * value_group;
+    Dict_MetadataGroup* metadata_group;
 }
 Dict(Tkey_, Tval_);
 
@@ -288,19 +253,19 @@ static inline bool Dict_Init(Dict(Tkey_, Tval_) * dict, size_t capacity) {
     dict->capacity = 16 * CTL_NEXT_POW2(capacity / 16);
     dict->size     = 0;
 
-    size_t groupCount        = dict->capacity / 16;
-    size_t metadataGroupSize = groupCount * sizeof(Dict_MetadataGroup);
-    size_t keyGroupSize      = groupCount * sizeof(Dict_ValueGroup(Tkey_, Tval_));
-    size_t valueGroupSize    = groupCount * sizeof(Dict_KeyGroup(Tkey_, Tval_));
+    size_t group_count         = dict->capacity / 16;
+    size_t metadata_group_size = group_count * sizeof(Dict_MetadataGroup);
+    size_t key_group_size      = group_count * sizeof(Dict_KeyGroup(Tkey_, Tval_));
+    size_t value_group_size    = group_count * sizeof(Dict_ValueGroup(Tkey_, Tval_));
 
-    void* block = Dict_Malloc(metadataGroupSize + keyGroupSize + valueGroupSize);
+    void* block = Dict_Malloc(metadata_group_size + key_group_size + value_group_size);
     if (block == NULL) {
         return false;
     }
 
-    dict->metadataGroup = block;
-    dict->keyGroup      = block + metadataGroupSize;
-    dict->valueGroup    = block + metadataGroupSize + keyGroupSize;
+    dict->metadata_group = block;
+    dict->key_group      = block + metadata_group_size;
+    dict->value_group    = block + metadata_group_size + key_group_size;
 
     return true;
 }
@@ -329,7 +294,8 @@ static inline Dict(Tkey_, Tval_) * Dict_New(Tkey_, Tval_)(size_t capacity) {
  */
 CTL_OVERLOADABLE
 static inline void Dict_Uninit(Dict(Tkey_, Tval_) * dict) {
-    Dict_Free(dict->metadataGroup);
+    Dict_Free(dict->metadata_group);
+    dict->metadata_group = NULL;
 }
 
 /**
@@ -345,39 +311,39 @@ static inline void Dict_Delete(Dict(Tkey_, Tval_) * dict) {
 
 CTL_OVERLOADABLE
 static inline bool
-Dict_Find(Dict(Tkey_, Tval_) * dict, Tkey key, uint32_t hash, size_t* groupIndexOut, size_t* slotIndexOut) {
-    size_t        groupIndex       = hash & (dict->capacity / 16 - 1);
-    Dict_Metadata expectedMetadata = {.hlow = hash, .occupied = true};
+Dict_Find(Dict(Tkey_, Tval_) * dict, Tkey key, uint32_t hash, size_t* group_index_out, size_t* slot_index_out) {
+    size_t        group_index       = hash & (dict->capacity / 16 - 1);
+    Dict_Metadata expected_metadata = {.hlow = hash, .occupied = true};
 
     // look through the dict for a match
     // NOTE: we don't bother to provide a termination condition because the table should always have an
     // empty entry
     while (true) {
         // compare a group at a time via SIMD (16 in one go)
-        uint16_t mask = Dict_CompareBitmask(dict->metadataGroup[groupIndex], expectedMetadata.u8);
+        uint16_t mask = Dict_CompareBitmask(dict->metadata_group[group_index], expected_metadata.u8);
 
         // if bits are set in the mask, check each of the set bit positions (corresponding to positions in
         // the group)
         for (int imask = mask, bitpos = 0; imask != 0; imask &= ~(1 << bitpos)) {
-            bitpos = ffs(mask) - 1;
-            if (Dict_CompareKey(key, dict->keyGroup[groupIndex].key[bitpos])) {
-                *groupIndexOut = groupIndex;
-                *slotIndexOut  = bitpos;
+            bitpos = ffs(imask) - 1;
+            if (Dict_CompareKey(key, dict->key_group[group_index].key[bitpos])) {
+                *group_index_out = group_index;
+                *slot_index_out  = bitpos;
                 return true;
             }
         }
 
         // if any were unoccupied, the entry must not be present in the dictionary
-        uint16_t occupiedMask = Dict_OccupiedBitmask(dict->metadataGroup[groupIndex]);
-        if (occupiedMask != 0xFFFF) {
-            *groupIndexOut = groupIndex;
-            *slotIndexOut  = occupiedMask;
+        uint16_t occupied_mask = Dict_OccupiedBitmask(dict->metadata_group[group_index]);
+        if (occupied_mask != 0xFFFF) {
+            *group_index_out = group_index;
+            *slot_index_out  = occupied_mask;
             return false;
         }
 
         // go to next group
         // TODO: quadratic probing? might be better
-        groupIndex = (groupIndex + 1) & (dict->capacity / 16 - 1);
+        group_index = (group_index + 1) & (dict->capacity / 16 - 1);
     }
 }
 
@@ -385,15 +351,15 @@ Dict_Find(Dict(Tkey_, Tval_) * dict, Tkey key, uint32_t hash, size_t* groupIndex
  * @brief Looks up a value given a key, returns true if the key was found, false otherwise
  * @param dict The dictionary to search for the key
  * @param key The key to look for
- * @param outVal A pointer to where to write the value found at @param key, if found
- * @return True if @param key was found and the value was written to @param outVal, false otherwise
+ * @param out_val A pointer to where to write the value found at @param key, if found
+ * @return True if @param key was found and the value was written to @param out_val, false otherwise
  */
 CTL_OVERLOADABLE
-static inline bool Dict_Get(Dict(Tkey_, Tval_) * dict, Tkey key, Tval* outVal) {
+static inline bool Dict_Get(Dict(Tkey_, Tval_) * dict, Tkey key, Tval* out_val) {
     uint32_t hash = Dict_HashKey(key);
-    size_t   groupIndex, slotIndex;
-    if (Dict_Find(dict, key, hash, &groupIndex, &slotIndex)) {
-        *outVal = dict->valueGroup[groupIndex].val[slotIndex];
+    size_t   group_index, slot_index;
+    if (Dict_Find(dict, key, hash, &group_index, &slot_index)) {
+        *out_val = dict->value_group[group_index].val[slot_index];
         return true;
     }
 
@@ -414,25 +380,25 @@ static inline bool Dict_Get(Dict(Tkey_, Tval_) * dict, Tkey key, Tval* outVal) {
 CTL_OVERLOADABLE
 static inline bool Dict_Set(Dict(Tkey_, Tval_) * dict, Tkey key, Tval val) {
     uint32_t hash = Dict_HashKey(key);
-    size_t   groupIndex, slotIndex;
-    if (Dict_Find(dict, key, hash, &groupIndex, &slotIndex)) {
+    size_t   group_index, slot_index;
+    if (Dict_Find(dict, key, hash, &group_index, &slot_index)) {
         // key was found in the dict already, overwrite the value
         // TODO: should we overwrite the key? e.g. char* identical strings in different memory locations?
-        dict->valueGroup[groupIndex].val[slotIndex] = val;
+        dict->value_group[group_index].val[slot_index] = val;
     } else {
         // key was not found in the dict already, we get the group index it should go in, but we need to
         // determine the next open slot from the slot mask
-        size_t slotMask = slotIndex;
-        int    bitpos   = ffs(~(uint16_t)slotMask) - 1;
+        size_t slot_mask = slot_index;
+        int    bitpos    = ffs(~(uint16_t)slot_mask) - 1;
 
-        dict->valueGroup[groupIndex].val[bitpos] = val;
-        dict->keyGroup[groupIndex].key[bitpos]   = key;
+        dict->value_group[group_index].val[bitpos] = val;
+        dict->key_group[group_index].key[bitpos]   = key;
 
-        dict->metadataGroup[groupIndex].slot[bitpos] = (Dict_Metadata){.hlow = hash, .occupied = true};
+        dict->metadata_group[group_index].slot[bitpos] = (Dict_Metadata){.hlow = hash, .occupied = true};
         dict->size += 1;
     }
 
-    if (dict->size * 1024 > dict->capacity * Dict_MaxLoad) {
+    if (2 * dict->size >= dict->capacity) {
         if (!Dict_Grow(dict)) {
             // Growth allocation failed
             return false;
@@ -443,134 +409,191 @@ static inline bool Dict_Set(Dict(Tkey_, Tval_) * dict, Tkey key, Tval val) {
 }
 
 /**
- * @brief Clears the dict of all elements
+ * @brief Clears the dict of all elements, resetting to a clean state
  * @param dict The dict to clear
- * @note This does not shrink the dict, it just clears all the memory and resets the size
  */
 CTL_OVERLOADABLE
 static inline void Dict_Clear(Dict(Tkey_, Tval_) * dict) {
-    dict->size = 0;
-
-    size_t groupCount        = dict->capacity / 16;
-    size_t metadataGroupSize = groupCount * sizeof(Dict_MetadataGroup);
-    size_t keyGroupSize      = groupCount * sizeof(Dict_ValueGroup(Tkey_, Tval_));
-    size_t valueGroupSize    = groupCount * sizeof(Dict_KeyGroup(Tkey_, Tval_));
-
-    memset(dict->metadataGroup, 0x00, metadataGroupSize + keyGroupSize + valueGroupSize);
+    Dict_Uninit(dict);
+    Dict_Init(dict, 0);
 }
 
 /**
  * @brief Iteratively enumerate keys within the dict, returns a pointer to the next occupied key given an
  * existing key in the dict
  * @param dict The dictionary to enumerate
- * @param prevKey The previous key, passing NULL will give provide the first key in the dict
- * @return Returns NULL if @param prevKey was the last key in the dict, otherwise returns @param prevKey
+ * @param prev_key The previous key, passing NULL will give provide the first key in the dict
+ * @return Returns NULL if @param prev_key was the last key in the dict, otherwise returns @param prev_key
  * successor
  */
 CTL_OVERLOADABLE
-static inline Tkey* Dict_EnumerateKeys(Dict(Tkey_, Tval_) * dict, Tkey* prevKey) {
-    if (prevKey == NULL) {
-        if (dict->metadataGroup[0].slot[0].occupied) {
+static inline Tkey* Dict_EnumerateKeys(Dict(Tkey_, Tval_) * dict, Tkey* prev_key) {
+    const size_t max_group_index = dict->capacity / 16;
+
+    if (prev_key == NULL) {
+        if (dict->metadata_group[0].slot[0].occupied) {
             // return the first one if no previous one was supplied and it's occupied
-            return &dict->keyGroup[0].key[0];
+            return &dict->key_group[0].key[0];
         } else {
             // set prevKey to the first one since we know it's empty
-            prevKey = &dict->keyGroup[0].key[0];
+            prev_key = &dict->key_group[0].key[0];
         }
     }
 
-    // find the next occupied key
-    uintptr_t firstKeyAddr = (uintptr_t)&dict->keyGroup[0].key[0];
-    uintptr_t deltaBytes   = (uintptr_t)prevKey - firstKeyAddr;
-    size_t    groupIndex   = deltaBytes / sizeof(Dict_KeyGroup(Tkey_, Tval_));
-    size_t    slotIndex    = (deltaBytes - groupIndex * sizeof(Dict_KeyGroup(Tkey_, Tval_))) / sizeof(Tkey);
+    // find the group index and slot index
+    uintptr_t first_key_addr = (uintptr_t)&dict->key_group[0].key[0];
+    uintptr_t delta_bytes    = (uintptr_t)prev_key - first_key_addr;
+    size_t    group_index    = delta_bytes / sizeof(Dict_KeyGroup(Tkey_, Tval_));
+    size_t    slot_index     = (delta_bytes - group_index * sizeof(Dict_KeyGroup(Tkey_, Tval_))) / sizeof(Tkey);
 
-    while (true) {
-        if (groupIndex == dict->capacity / 16) {
-            return NULL;
-        } else if (slotIndex == 16 && dict->metadataGroup[groupIndex].slot[0].occupied) {
-            return &dict->keyGroup[groupIndex].key[0];
-        }
+    // check if there is another slot in this group that is occupied after prev key
+    uint16_t occupied_mask       = Dict_OccupiedBitmask(dict->metadata_group[group_index]);
+    uint16_t clear_mask          = (1ull << ((uint32_t)slot_index + 1)) - 1;
+    uint16_t upper_occupied_mask = occupied_mask & ~clear_mask;
 
-        uint16_t occupiedMask     = Dict_OccupiedBitmask(dict->metadataGroup[groupIndex]);
-        uint16_t clearMask        = ((1 << slotIndex) - 1) | (1 << slotIndex);
-        uint16_t nextOccupiedMask = occupiedMask & ~clearMask;
-
-        if (nextOccupiedMask) {
-            int nextSlot = ffs(nextOccupiedMask) - 1;
-            return &dict->keyGroup[groupIndex].key[nextSlot];
-        }
-
-        groupIndex += 1;
-        slotIndex = 16;
+    if (upper_occupied_mask) {
+        int next_slot = ffs(upper_occupied_mask) - 1;
+        return &dict->key_group[group_index].key[next_slot];
     }
+
+    // if none were set we need to increment the group index and check the next group
+    group_index += 1;
+
+    for (; group_index < max_group_index; group_index += 1) {
+        occupied_mask = Dict_OccupiedBitmask(dict->metadata_group[group_index]);
+
+        if (occupied_mask) {
+            int next_slot = ffs(occupied_mask) - 1;
+            return &dict->key_group[group_index].key[next_slot];
+        }
+    }
+
+    return NULL;
 }
 
 /**
  * @brief Iteratively enumerate values within the dict, returns a pointer to the next occupied value given
  * an existing value in the dict
  * @param dict The dictionary to enumerate
- * @param prevValue The previous value, passing NULL will give provide the first value in the dict
- * @return Returns NULL if @param prevValue was the last value in the dict, otherwise returns @param
- * prevValue successor
+ * @param prev_value The previous value, passing NULL will give provide the first value in the dict
+ * @return Returns NULL if @param prev_value was the last value in the dict, otherwise returns @param prev_value
+ * successor
  */
 CTL_OVERLOADABLE
-static inline Tval* Dict_EnumerateValues(Dict(Tkey_, Tval_) * dict, Tval* prevValue) {
-    if (prevValue == NULL) {
-        if (dict->metadataGroup[0].slot[0].occupied) {
+static inline Tval* Dict_EnumerateValues(Dict(Tkey_, Tval_) * dict, Tval* prev_value) {
+    const size_t max_group_index = dict->capacity / 16;
+
+    if (prev_value == NULL) {
+        if (dict->metadata_group[0].slot[0].occupied) {
             // return the first one if no previous one was supplied and it's occupied
-            return &dict->valueGroup[0].val[0];
+            return &dict->value_group[0].val[0];
         } else {
             // set prevKey to the first one since we know it's empty
-            prevValue = &dict->valueGroup[0].val[0];
+            prev_value = &dict->value_group[0].val[0];
         }
     }
 
-    // find the next occupied key
-    uintptr_t firstValueAddr = (uintptr_t)&dict->valueGroup[0].val[0];
-    uintptr_t deltaBytes     = (uintptr_t)prevValue - firstValueAddr;
-    size_t    groupIndex     = deltaBytes / sizeof(Dict_ValueGroup(Tkey_, Tval_));
-    size_t    slotIndex      = (deltaBytes - groupIndex * sizeof(Dict_ValueGroup(Tkey_, Tval_))) / sizeof(Tval);
+    // find the group index and slot index
+    uintptr_t first_key_addr = (uintptr_t)&dict->value_group[0].val[0];
+    uintptr_t delta_bytes    = (uintptr_t)prev_value - first_key_addr;
+    size_t    group_index    = delta_bytes / sizeof(Dict_ValueGroup(Tkey_, Tval_));
+    size_t    slot_index     = (delta_bytes - group_index * sizeof(Dict_ValueGroup(Tkey_, Tval_))) / sizeof(Tkey);
 
-    while (true) {
-        if (groupIndex == dict->capacity / 16) {
-            return NULL;
-        } else if (slotIndex == 16 && dict->metadataGroup[groupIndex].slot[0].occupied) {
-            return &dict->valueGroup[groupIndex].val[0];
-        }
+    // check if there is another slot in this group that is occupied after prev key
+    uint16_t occupied_mask       = Dict_OccupiedBitmask(dict->metadata_group[group_index]);
+    uint16_t clear_mask          = (1ull << ((uint32_t)slot_index + 1)) - 1;
+    uint16_t upper_occupied_mask = occupied_mask & ~clear_mask;
 
-        uint16_t occupiedMask     = Dict_OccupiedBitmask(dict->metadataGroup[groupIndex]);
-        uint16_t clearMask        = ((1 << slotIndex) - 1) | (1 << slotIndex);
-        uint16_t nextOccupiedMask = occupiedMask & ~clearMask;
-
-        if (nextOccupiedMask) {
-            int nextSlot = ffs(nextOccupiedMask) - 1;
-            return &dict->valueGroup[groupIndex].val[nextSlot];
-        }
-
-        groupIndex += 1;
-        slotIndex = 16;
+    if (upper_occupied_mask) {
+        int next_slot = ffs(upper_occupied_mask) - 1;
+        assert(group_index < max_group_index);
+        return &dict->value_group[group_index].val[next_slot];
     }
+
+    // if none were set we need to increment the group index and check the next group
+    group_index += 1;
+
+    for (; group_index < max_group_index; group_index += 1) {
+        occupied_mask = Dict_OccupiedBitmask(dict->metadata_group[group_index]);
+
+        if (occupied_mask) {
+            int next_slot = ffs(occupied_mask) - 1;
+            assert(group_index < max_group_index);
+            return &dict->value_group[group_index].val[next_slot];
+        }
+    }
+
+    return NULL;
 }
 
 CTL_OVERLOADABLE
 static inline bool Dict_Grow(Dict(Tkey_, Tval_) * dict) {
-    Dict(Tkey_, Tval_) dictNew;
-    if (!Dict_Init(&dictNew, 2 * dict->capacity)) {
+    const size_t max_group_index = dict->capacity / 16;
+
+    // create a new temp dict to use as a temporary
+    Dict(Tkey_, Tval_) dict_new;
+    if (!Dict_Init(&dict_new, 2 * dict->capacity)) {
         return false;
     }
 
-    // TODO: provide a better dict copy that doesn't require a lookup
-    Tkey* key = NULL;
-    Tval  val;
-    while ((key = Dict_EnumerateKeys(dict, key))) {
-        Dict_Get(dict, *key, &val);
-        Dict_Set(&dictNew, *key, val);
+    // iterate through occupied slots and add them to the new dict to rehash then entries
+    size_t   group_index   = 0;
+    uint16_t clear_mask    = 0;
+    uint16_t occupied_mask = Dict_OccupiedBitmask(dict->metadata_group[group_index]);
+
+    while (group_index < max_group_index) {
+        uint16_t next_occupied_mask = occupied_mask & ~clear_mask;
+
+        if (next_occupied_mask) {
+            int  next_slot = ffs(next_occupied_mask) - 1;
+            Tkey key       = dict->key_group[group_index].key[next_slot];
+            Tval val       = dict->value_group[group_index].val[next_slot];
+
+            if (!Dict_Set(&dict_new, key, val)) {
+                Dict_Uninit(&dict_new);
+                return false;
+            }
+
+            // adjust the clear mask to exclude already processed entries
+            clear_mask = (1 << (next_slot + 1)) - 1;
+        } else {
+            // increment the group_index and reset the clear_mask
+            group_index += 1;
+
+            occupied_mask = Dict_OccupiedBitmask(dict->metadata_group[group_index]);
+            clear_mask    = 0;
+        }
     }
 
-    // free the old dict, copy the new one
+    // free the old dict, copy the new one's pointers
     Dict_Uninit(dict);
-    *dict = dictNew;
+    *dict = dict_new;
+
+    return true;
+}
+
+CTL_OVERLOADABLE
+static inline bool Dict_Copy(Dict(Tkey_, Tval_) * src_dict, Dict(Tkey_, Tval_) * dst_dict) {
+    // new_dict will be manipulated to prevent breaking dst_dict in the event of an allocation failure
+    Dict(Tkey_, Tval_) new_dict;
+    if (!Dict_Init(&new_dict, src_dict->capacity)) {
+        return false;
+    }
+
+    // figure out the total size of the source dict's memory
+    size_t group_count         = src_dict->capacity / 16;
+    size_t metadata_group_size = group_count * sizeof(Dict_MetadataGroup);
+    size_t key_group_size      = group_count * sizeof(Dict_KeyGroup(Tkey_, Tval_));
+    size_t value_group_size    = group_count * sizeof(Dict_ValueGroup(Tkey_, Tval_));
+    size_t total_size          = metadata_group_size + key_group_size + value_group_size;
+
+    // copy the source dict's data to the new dict's data
+    memcpy(new_dict.metadata_group, src_dict->metadata_group, total_size);
+    new_dict.size = src_dict->size;
+
+    // free the dst_dict, then copy new_dict to it so that it's now the duplicate
+    Dict_Uninit(dst_dict);
+    *dst_dict = new_dict;
 
     return true;
 }
