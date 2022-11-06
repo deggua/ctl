@@ -13,8 +13,5 @@
 -Wno-multichar
 -Wno-missing-braces
 
--lm
--pthread
-
 -march=native
 -mtune=native
