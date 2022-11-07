@@ -2,6 +2,7 @@
 // TODO: Dict_Enumerate returning a Tuple(key, value)? Would work but the API might get ugly
 // TODO: Should we use a 64-bit hash function?
 // TODO: Should we use a ligher weight integer hashing function?
+// TODO: Should we provide a hash function/compare function for void*?
 
 /* --- Templated Dictionary Type --- */
 /* Usage:
@@ -26,7 +27,7 @@
         Hash functions are provided for most integral types:
             float, double, int types -- 3 round xor-shift-multiply
             char*                    -- FNV1a
-        Default compare key function is simple equality (key1 == key2)
+        Default compare key function is simple equality (key1 == key2) for integral types and strcmp for char*
 */
 
 #include <assert.h>
@@ -129,11 +130,57 @@ static inline uint32_t Dict_HashKey_Str(const char* restrict str) {
             int64_t:    Dict_HashKey_U64, \
             float:      Dict_HashKey_F32, \
             double:     Dict_HashKey_F64, \
-            char*:      Dict_HashKey_Str)(key)
+            char*:      Dict_HashKey_Str)((key))
 #endif
 
 #if !defined(Dict_CompareKey)
-#    define Dict_CompareKey(key1, key2) ((bool)(key1 == key2))
+#    if !defined(CTL_DICT_COMMON_COMPARE)
+#        define CTL_DICT_COMMON_COMPARE
+
+static inline bool Dict_CompareKey_U8(uint8_t k1, uint8_t k2) {
+    return k1 == k2;
+}
+
+static inline bool Dict_CompareKey_U16(uint16_t k1, uint16_t k2) {
+    return k1 == k2;
+}
+
+static inline bool Dict_CompareKey_U32(uint32_t k1, uint32_t k2) {
+    return k1 == k2;
+}
+
+static inline bool Dict_CompareKey_U64(uint64_t k1, uint64_t k2) {
+    return k1 == k2;
+}
+
+static inline bool Dict_CompareKey_F32(float k1, float k2) {
+    return k1 == k2;
+}
+
+static inline bool Dict_CompareKey_F64(double k1, double k2) {
+    return k1 == k2;
+}
+
+static inline bool Dict_CompareKey_Str(char* k1, char* k2) {
+    return !strcmp(k1, k2);
+}
+
+#    endif
+
+#    define Dict_CompareKey(k1, k2) \
+        (_Generic((k1), \
+            uint8_t:    Dict_CompareKey_U8,  \
+            int8_t:     Dict_CompareKey_U8,  \
+            uint16_t:   Dict_CompareKey_U16, \
+            int16_t:    Dict_CompareKey_U16, \
+            uint32_t:   Dict_CompareKey_U32, \
+            int32_t:    Dict_CompareKey_U32, \
+            uint64_t:   Dict_CompareKey_U64, \
+            int64_t:    Dict_CompareKey_U64, \
+            float:      Dict_CompareKey_F32, \
+            double:     Dict_CompareKey_F64, \
+            char*:      Dict_CompareKey_Str \
+        )((k1), (k2)))
 #endif
 
 #if !defined(Dict_Malloc)

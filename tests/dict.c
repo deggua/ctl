@@ -9,10 +9,9 @@
 #define Dict_ValueType_Alias str
 #include "containers/dict.h"
 
-#define Dict_KeyType            char*
-#define Dict_KeyType_Alias      str
-#define Dict_ValueType          int
-#define Dict_CompareKey(k1, k2) (!strcmp(k1, k2))
+#define Dict_KeyType       char*
+#define Dict_KeyType_Alias str
+#define Dict_ValueType     int
 #include "containers/dict.h"
 
 typedef struct {
