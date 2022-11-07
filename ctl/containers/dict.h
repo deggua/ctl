@@ -1,4 +1,4 @@
-// TODO: The code shared between Dict_EnumerateKeys and Dict_EnumerateValues should be commonized somehow
+// TODO: There's code shared between EnumerateKeys, EnumerateValues, and Grow that should be commonized
 // TODO: Dict_Enumerate returning a Tuple(key, value)? Would work but the API might get ugly
 // TODO: Should we use a 64-bit hash function?
 // TODO: Should we use a ligher weight integer hashing function?
@@ -532,7 +532,7 @@ static inline bool Dict_Grow(Dict(Tkey_, Tval_) * dict) {
 
     // create a new temp dict to use as a temporary
     Dict(Tkey_, Tval_) dict_new;
-    if (!Dict_Init(&dict_new, 2 * dict->capacity)) {
+    if (!Dict_Init(&dict_new, dict->capacity)) {
         return false;
     }
 
@@ -576,7 +576,7 @@ CTL_OVERLOADABLE
 static inline bool Dict_Copy(Dict(Tkey_, Tval_) * src_dict, Dict(Tkey_, Tval_) * dst_dict) {
     // new_dict will be manipulated to prevent breaking dst_dict in the event of an allocation failure
     Dict(Tkey_, Tval_) new_dict;
-    if (!Dict_Init(&new_dict, src_dict->capacity)) {
+    if (!Dict_Init(&new_dict, src_dict->capacity - 1)) {
         return false;
     }
 
